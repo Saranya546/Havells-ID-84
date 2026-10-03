@@ -1,0 +1,512 @@
+# Intelligent Condition Monitoring of HV Isolator Using MATLAB/Simulink
+
+## Project Overview
+
+This project develops a MATLAB/Simulink model for condition monitoring of a motor-operated high-voltage isolator.
+
+The system models the electrical drive and mechanical operating mechanism of the isolator. Electrical and mechanical signals are collected during each opening/closing operation and are later used for feature extraction, fault analysis, dataset generation, and ANN/ML-based health prediction.
+
+The present implementation contains:
+
+- Healthy isolator simulation
+- Mechanical friction-fault simulation
+- Motor voltage measurement
+- Motor current measurement
+- Shaft/mechanism torque measurement
+- Angular-position measurement
+- Shaft-speed measurement for fault analysis
+- Fault-torque generation
+- Feature extraction
+- Healthy dataset generation
+- Healthy/faulty waveform comparison
+- Preparation of data for machine-learning/ANN training
+
+The project has been developed for **MATLAB R2026a**.
+
+---
+
+# 1. Software Requirements
+
+Recommended MATLAB installation:
+
+- MATLAB R2026a
+- Simulink
+- Simscape
+- Simscape Electrical
+
+For later ANN/ML development:
+
+- Deep Learning Toolbox
+- Statistics and Machine Learning Toolbox
+
+---
+
+# 2. Main Models
+
+## `coremodel.slx`
+
+Main healthy isolator model.
+
+This model represents the normal operating condition of the isolator mechanism.
+
+Typical logged signals are:
+
+| Signal | Description | Unit |
+|---|---|---|
+| `Vm` | Motor terminal voltage | V |
+| `Im` | Motor current | A |
+| `tauNm` | Mechanical/shaft torque | N·m |
+| `theta_deg` | Isolator angular position | degree |
+
+This model should be used to generate the baseline/healthy dataset.
+
+---
+
+## `coremodelfault.slx`
+
+Fault-injected version of the isolator model.
+
+The model contains an additional mechanical fault branch used to represent increased shaft friction/bearing resistance.
+
+In addition to the normal signals, the model may log:
+
+| Signal | Description | Unit |
+|---|---|---|
+| `omega` | Shaft angular velocity | rad/s |
+| `Tfault` | Additional generated fault torque | N·m |
+
+The faulty simulation is compared with the healthy model to determine the effect of increased mechanical resistance on voltage, current, torque, operating time, shaft speed, and position.
+
+---
+
+# 3. Important Simulation Parameters
+
+A typical simulation uses:
+
+```matlab
+Bshaft = 2000;
+torquefullscaleNm = 1000;
+```
+
+`Bshaft` represents the shaft/mechanical damping or friction-related parameter used by the model.
+
+`torquefullscaleNm` represents the full-scale torque value used in the measurement/ADC processing chain.
+
+Other configuration values are initialized by `init.m` and/or the project configuration files.
+
+Always run the initialization script before starting the simulation.
+
+---
+
+# 4. Running the Project
+
+Open MATLAB R2026a and make the project directory the MATLAB **Current Folder**.
+
+Run:
+
+```matlab
+clear;
+clc;
+close all;
+
+run("init.m");
+```
+
+Set the required parameters if they are not already defined by `init.m`:
+
+```matlab
+Bshaft = 2000;
+torquefullscaleNm = 1000;
+```
+
+---
+
+# 5. Running the Healthy Model
+
+Run:
+
+```matlab
+outHealthy = sim("coremodel","StopTime","12");
+```
+
+Obtain the logged signals:
+
+```matlab
+logsHealthy = outHealthy.logsout;
+```
+
+Check which signals were logged:
+
+```matlab
+disp(string(logsHealthy.getElementNames))
+```
+
+Expected signals include:
+
+```text
+Vm
+Im
+tauNm
+theta_deg
+```
+
+Example:
+
+```matlab
+Vm_sig    = logsHealthy.get("Vm");
+Im_sig    = logsHealthy.get("Im");
+tau_sig   = logsHealthy.get("tauNm");
+theta_sig = logsHealthy.get("theta_deg");
+```
+
+Each signal must use its own time vector.
+
+For example:
+
+```matlab
+tV = Vm_sig.Values.Time;
+Vm = squeeze(Vm_sig.Values.Data);
+
+tI = Im_sig.Values.Time;
+Im = squeeze(Im_sig.Values.Data);
+
+tTau = tau_sig.Values.Time;
+tauNm = squeeze(tau_sig.Values.Data);
+
+tTheta = theta_sig.Values.Time;
+theta_deg = squeeze(theta_sig.Values.Data);
+```
+
+Do **not** truncate all signals to the same number of samples because Simscape signals may have different time vectors.
+
+---
+
+# 6. Running the Fault Model
+
+Run:
+
+```matlab
+outFault = sim("coremodelfault","StopTime","12");
+```
+
+Obtain the logged dataset:
+
+```matlab
+logsFault = outFault.logsout;
+```
+
+Check its contents:
+
+```matlab
+disp(string(logsFault.getElementNames))
+```
+
+Expected signals include:
+
+```text
+Vm
+Im
+tauNm
+theta_deg
+omega
+Tfault
+```
+
+The exact set depends on which Simulink signals have signal logging enabled.
+
+---
+
+# 7. Healthy Dataset Generation
+
+The healthy model is executed repeatedly while selected model parameters are varied within an acceptable healthy range.
+
+Important measurements are collected from each operation.
+
+Typical extracted quantities include:
+
+- Mean motor voltage
+- Minimum motor voltage
+- Voltage span
+- RMS motor current
+- Peak motor current
+- Mean absolute torque
+- Maximum torque
+- Torque standard deviation
+- Operating time
+- Final angular position
+- Current energy-related features
+- Torque-related features
+
+The extracted features form the healthy-condition dataset used as a reference for later fault classification.
+
+---
+
+# 8. Feature Extraction
+
+`operation_features.m` performs operation-level feature calculation.
+
+Its input measurements correspond to quantities such as:
+
+```text
+Motor Voltage
+Motor Current
+Mechanism Torque
+Mechanism Position
+```
+
+The function generates an operation feature vector that can be used by the later ANN/ML stage.
+
+`featuresextraction.m` is used for processing simulation results and forming the required feature dataset.
+
+`featurecheck.m` is used for examining the generated features and verifying that they remain physically meaningful.
+
+---
+
+# 9. Healthy and Faulty Comparison
+
+The main objective of the fault experiment is to compare:
+
+```text
+Healthy isolator
+       ↓
+V, I, Torque, Position
+       ↓
+Baseline characteristics
+
+Faulty isolator
+       ↓
+Additional mechanical resistance
+       ↓
+V, I, Torque, Position, Speed, Fault Torque
+       ↓
+Fault characteristics
+```
+
+Increasing mechanical resistance is expected to alter quantities such as motor current, torque, mechanism speed, and operating time.
+
+The exact effect should be determined from the simulated waveforms rather than assumed beforehand.
+
+---
+
+# 10. Visualization
+
+Run the supplied visualization script:
+
+```matlab
+run("visualize_healthy_faulty.m")
+```
+
+The script generates:
+
+1. Healthy-condition voltage waveform
+2. Healthy-condition current waveform
+3. Healthy-condition torque waveform
+4. Healthy-condition angular-position waveform
+5. Fault-condition voltage waveform
+6. Fault-condition current waveform
+7. Fault-condition torque waveform
+8. Fault-condition angular-position waveform
+9. Healthy versus faulty voltage comparison
+10. Healthy versus faulty current comparison
+11. Healthy versus faulty torque comparison
+12. Healthy versus faulty angle comparison
+13. Shaft-speed waveform, when available
+14. Generated fault-torque waveform, when available
+
+---
+
+# 11. File Description
+
+| File | Purpose |
+|---|---|
+| `coremodel.slx` | Main healthy isolator Simulink model |
+| `coremodel.slxc` | Automatically generated Simulink cache for `coremodel.slx` |
+| `coremodelfault.slx` | Isolator model containing the mechanical/fault simulation branch |
+| `coremodelfault.slxc` | Automatically generated Simulink cache for the fault model |
+| `featurecheck.m` | Checks/validates extracted features and their values |
+| `featuresextraction.m` | Extracts statistical and operation-level features from simulation measurements |
+| `healthy_dataset.mat` | Processed dataset containing healthy-condition samples/features |
+| `healthy_feature_check.mat` | Saved results used for checking healthy feature consistency |
+| `healthy_original.mat` | Saved original/raw healthy simulation data |
+| `healthy_run_01.mat` | Data from an individual healthy simulation run |
+| `healthydata.m` | Script used for generating/processing healthy-condition simulation data |
+| `init.m` | Initializes model parameters and MATLAB workspace variables |
+| `isolator_config_demo.m` | Demonstrates/configures isolator project parameters |
+| `isolator_project_config.mat` | Saved configuration parameters for the isolator project |
+| `mcxn547_adc_model.m` | MATLAB representation of ADC/data-acquisition behaviour associated with the NXP MCXN547 processing stage |
+| `model.slx` | Earlier/development Simulink model; retain only if still required |
+| `operation_features.m` | Calculates the operation-level feature vector from V, I, torque and position |
+| `selftest_blocks.m` | Performs checks/self-tests associated with signal-processing or model blocks |
+| `shaft_friction_comparison.mat` | Saved healthy/faulty shaft-friction comparison data |
+| `untitled1.slx` | Development/test Simulink model; rename or remove if no longer required |
+| `README.md` | Project documentation and execution instructions |
+
+---
+
+# 12. `.slxc` Files
+
+Files such as:
+
+```text
+coremodel.slxc
+coremodelfault.slxc
+```
+
+are Simulink cache files.
+
+They are generated automatically to improve compilation/simulation speed.
+
+They are **not the actual Simulink models**.
+
+The important source files are:
+
+```text
+coremodel.slx
+coremodelfault.slx
+```
+
+The `.slxc` files may normally be excluded from Git/GitHub because MATLAB can regenerate them.
+
+A `.gitignore` entry can therefore contain:
+
+```gitignore
+*.slxc
+slprj/
+*.asv
+```
+
+---
+
+# 13. Recommended Project Workflow
+
+```text
+Create physical isolator model
+            ↓
+Configure DC motor and mechanical system
+            ↓
+Add Voltage / Current / Torque / Position sensors
+            ↓
+Create isolator controller
+            ↓
+Run healthy simulation
+            ↓
+Verify V, I, Torque and Position
+            ↓
+Generate repeated healthy runs
+            ↓
+Extract operation features
+            ↓
+Generate healthy dataset
+            ↓
+Introduce mechanical friction fault
+            ↓
+Run faulty model
+            ↓
+Measure V, I, Torque, Angle, Speed and Fault Torque
+            ↓
+Compare healthy and faulty behaviour
+            ↓
+Generate labelled fault dataset
+            ↓
+Normalize/select features
+            ↓
+Train ANN / ML classifier
+            ↓
+Validate classifier
+            ↓
+Prepare model for embedded implementation
+            ↓
+Target NXP MCXN547 MCU
+```
+
+---
+
+# 14. Signal Logging Troubleshooting
+
+If MATLAB reports:
+
+```text
+Warning: Did not find any Dataset element using 'Vm'
+```
+
+first inspect the dataset:
+
+```matlab
+logs = outHealthy.logsout;
+
+disp(string(logs.getElementNames))
+```
+
+Do not access logged signals using:
+
+```matlab
+logs.Vm
+```
+
+Use:
+
+```matlab
+logs.get("Vm")
+```
+
+provided that `Vm` appears in the dataset.
+
+If it does not appear, enable **Signal Logging** for the corresponding Simulink signal and give the signal the required name.
+
+---
+
+# 15. Important Data-Processing Rule
+
+The electrical and mechanical signals may contain different numbers of samples.
+
+For example:
+
+```text
+Vm         : 125231 samples
+Im         : 125231 samples
+tauNm      : 125231 samples
+theta_deg  : 12001 samples
+```
+
+This is valid because different parts of the Simscape/Simulink system can have different sampling points.
+
+Therefore use:
+
+```matlab
+Vm_sig.Values.Time
+Im_sig.Values.Time
+tau_sig.Values.Time
+theta_sig.Values.Time
+```
+
+individually.
+
+Do not simply truncate every signal to the shortest vector.
+
+If signals must be compared sample-by-sample, interpolate them onto a common time vector first.
+
+---
+
+# 16. Current Stage of the Project
+
+The project presently contains the main stages required before ANN training:
+
+```text
+Healthy physical model       ✓
+Signal measurement           ✓
+Controller                    ✓
+Healthy simulation           ✓
+Healthy dataset              ✓
+Feature extraction           ✓
+Mechanical fault model       ✓
+Friction-fault simulation    ✓
+Healthy/fault comparison     ✓
+
+Fault dataset expansion      → Next
+Dataset labelling            → Next
+ANN training                 → Next
+ANN validation               → Next
+MCU deployment               → Later
+```
+
+The next major step is to generate multiple fault-severity samples instead of relying on a single faulty simulation. The resulting healthy and fault samples can then be combined into a labelled training dataset.
